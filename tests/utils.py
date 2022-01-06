@@ -1,5 +1,6 @@
 from http import HTTPStatus
-from unittest.mock import patch
+from unittest.mock import Mock
+from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify, Flask as App, session
 
@@ -111,8 +112,10 @@ class TestFlaskAzureOauth(FlaskAzureOauth):
             azure_tenancy_id=self.azure_tenancy_id,
             azure_application_id=self.azure_application_id,
             azure_client_application_ids=self.azure_client_application_ids,
-            azure_jwks=TestJwk(null_jwks=True).jwks(),
+            azure_oauth=self,
         )
+        self.jwks = TestJwk(null_jwks=True).jwks()
+        self.jwks_last_updated = datetime.now()
         self.register_token_validator(token_validator)
 
     def use_broken_jwks(self) -> None:
@@ -128,8 +131,28 @@ class TestFlaskAzureOauth(FlaskAzureOauth):
             azure_tenancy_id=self.azure_tenancy_id,
             azure_application_id=self.azure_application_id,
             azure_client_application_ids=self.azure_client_application_ids,
-            azure_jwks=broken_jwks,
+            azure_oauth=self,
         )
+        self.jwks = broken_jwks
+        self.jwks_last_updated = datetime.now()
+        self.register_token_validator(token_validator)
+
+    def use_expired_jwks(self) -> None:
+        """
+        Replaces the token validator with a version where the JSON Web Key Set is invalid, but the application
+        should update the JWKs since the validation failed and it's been more than 5 minutes since the last
+        update check
+        """
+        self.deregister_token_validator(self.validator)
+
+        token_validator = AzureTokenValidator(
+            azure_tenancy_id=self.azure_tenancy_id,
+            azure_application_id=self.azure_application_id,
+            azure_client_application_ids=self.azure_client_application_ids,
+            azure_oauth=self,
+        )
+        self.jwks = TestJwk().jwks()
+        self.jwks_last_updated = datetime.now() - timedelta(minutes=5, seconds=1)
         self.register_token_validator(token_validator)
 
     def use_replaced_jwks(self) -> None:
@@ -138,14 +161,16 @@ class TestFlaskAzureOauth(FlaskAzureOauth):
         """
         self.deregister_token_validator(self.validator)
 
-        previous_kid = self.jwks["keys"][0]["kid"]
+        random_kid = self._get_jwks()["keys"][0]["kid"]
 
         token_validator = AzureTokenValidator(
             azure_tenancy_id=self.azure_tenancy_id,
             azure_application_id=self.azure_application_id,
             azure_client_application_ids=self.azure_client_application_ids,
-            azure_jwks=TestJwk(kid=previous_kid).jwks(),
+            azure_oauth=self,
         )
+        self.jwks = TestJwk(kid=random_kid).jwks()
+        self.jwks_last_updated = datetime.now()
         self.register_token_validator(token_validator)
 
     def use_restored_jwks(self) -> None:
@@ -158,8 +183,9 @@ class TestFlaskAzureOauth(FlaskAzureOauth):
             azure_tenancy_id=self.azure_tenancy_id,
             azure_application_id=self.azure_application_id,
             azure_client_application_ids=self.azure_client_application_ids,
-            azure_jwks=self.jwks,
+            azure_oauth=self,
         )
+        self._update_jwks()
         self.register_token_validator(token_validator)
 
 
@@ -189,10 +215,12 @@ def create_app(**kwargs):
     if "AZURE_OAUTH_CLIENT_APPLICATION_IDS" in kwargs:
         app.config["AZURE_OAUTH_CLIENT_APPLICATION_IDS"] = kwargs["AZURE_OAUTH_CLIENT_APPLICATION_IDS"]
 
-    with patch.object(FlaskAzureOauth, "_get_jwks") as mocked_get_jwks:
-        mocked_get_jwks.side_effect = _get_jwks
-        app.auth = TestFlaskAzureOauth()
-        app.auth.init_app(app)
+    mocked_get_jwks = Mock()
+    mocked_get_jwks.side_effect = _get_jwks
+    FlaskAzureOauth._get_jwks = mocked_get_jwks
+
+    app.auth = TestFlaskAzureOauth()
+    app.auth.init_app(app)
 
     # Support invalid ways of setting up the auth provider when testing
     if "AUTH_MODE" in kwargs:
@@ -200,6 +228,8 @@ def create_app(**kwargs):
             app.auth.use_null_jwks()
         elif kwargs["AUTH_MODE"] == "broken-jwks":
             app.auth.use_broken_jwks()
+        elif kwargs["AUTH_MODE"] == "expired-jwks":
+            app.auth.use_expired_jwks()
         elif kwargs["AUTH_MODE"] == "replaced-jwks":
             app.auth.use_replaced_jwks()
         elif kwargs["AUTH_MODE"] == "restored-jwks":

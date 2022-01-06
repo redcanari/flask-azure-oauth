@@ -51,6 +51,11 @@ class FlaskOAuthProviderBaseTestCase(unittest.TestCase):
 
         return json_response
 
+    def _check_token_success(self, token: str):
+        response = self.client.get("/meta/auth/introspection", headers={"authorization": f"Bearer { token }"})
+
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+
     def _create_auth_token(self, header: dict = None, payload: dict = None, roles: list = None, scps: list = None):
         jwt = TestJwt(
             app=self.app,

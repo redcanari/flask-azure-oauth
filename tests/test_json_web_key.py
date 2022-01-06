@@ -61,6 +61,17 @@ class FlaskOAuthProviderJWKTestCase(FlaskOAuthProviderBaseTestCase):
         json_response = self._check_token_error_response(token)
         self.assertDictEqual(json_response, expected_payload)
 
+    def test_auth_expired_jwk(self):
+        token = self._create_auth_token()
+
+        # Change the application to replace the JSON Web Key Set with a different set of keys and set
+        # last updated to more than 5 minutes ago
+        self._change_application_auth(AUTH_MODE="expired-jwks")
+        self._check_token_success(token)
+
     def test_restore_jwks(self):
+        token = self._create_auth_token()
+
         # Change the application to restore the JSON Web Key Set to a normal state
         self._change_application_auth(AUTH_MODE="restored-jwks")
+        self._check_token_success(token)

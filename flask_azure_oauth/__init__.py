@@ -1,5 +1,6 @@
 import requests
 
+from datetime import datetime
 from flask import Flask as App
 
 from flask_azure_oauth.resource_protector import ResourceProtector
@@ -16,6 +17,7 @@ class FlaskAzureOauth(ResourceProtector):
         self.azure_application_id = None
         self.azure_client_application_ids = []
         self.jwks = {}
+        self.jwks_last_updated = 0
 
     def init_app(self, app: App):
         """
@@ -27,7 +29,7 @@ class FlaskAzureOauth(ResourceProtector):
         self.azure_tenancy_id = app.config["AZURE_OAUTH_TENANCY"]
         self.azure_application_id = app.config["AZURE_OAUTH_APPLICATION_ID"]
         self.azure_client_application_ids = None
-        self.jwks = self._get_jwks()
+        self._update_jwks()
 
         try:
             self.azure_client_application_ids = app.config["AZURE_OAUTH_CLIENT_APPLICATION_IDS"]
@@ -41,7 +43,7 @@ class FlaskAzureOauth(ResourceProtector):
             azure_tenancy_id=self.azure_tenancy_id,
             azure_application_id=self.azure_application_id,
             azure_client_application_ids=self.azure_client_application_ids,
-            azure_jwks=self.jwks,
+            azure_oauth=self,
         )
 
         self.register_token_validator(self.validator)
@@ -64,6 +66,13 @@ class FlaskAzureOauth(ResourceProtector):
         jwks_request.raise_for_status()
         return jwks_request.json()
 
+    def _update_jwks(self):
+        """
+        Updates the cached JWKs
+        """
+        self.jwks_last_updated = datetime.now()
+        self.jwks = self._get_jwks()
+
     def introspect_token(self, *, token_string: str) -> dict:
         """
         Returns details about the current (Azure) JSON Web Token for reference/debugging
@@ -81,7 +90,7 @@ class FlaskAzureOauth(ResourceProtector):
             azure_tenancy_id=self.azure_tenancy_id,
             azure_application_id=self.azure_application_id,
             azure_client_application_ids=self.azure_client_application_ids,
-            azure_jwks=self.jwks,
+            azure_oauth=self,
         )
         return token.introspect()
 
@@ -99,6 +108,6 @@ class FlaskAzureOauth(ResourceProtector):
             azure_tenancy_id=self.azure_tenancy_id,
             azure_application_id=self.azure_application_id,
             azure_client_application_ids=self.azure_client_application_ids,
-            azure_jwks=self.jwks,
+            azure_oauth=self,
         )
         return token.introspect_rfc7662()

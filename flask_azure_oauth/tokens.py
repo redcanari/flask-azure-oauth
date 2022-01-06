@@ -1,6 +1,6 @@
 import time
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Union, Callable, Optional
 
 # noinspection PyPackageRequirements
@@ -265,7 +265,7 @@ class AzureToken:
         azure_tenancy_id: str,
         azure_application_id: str,
         azure_client_application_ids: Optional[List[str]],
-        azure_jwks: dict,
+        azure_oauth,
     ):
         """
         :type token_string: str
@@ -277,11 +277,12 @@ class AzureToken:
         :type azure_client_application_ids: Optional[List[str]]
         :param azure_client_application_ids: Optional IDs of Azure Active Directory application registrations
         representing clients of this app, if none all client applications will be allowed
-        :type azure_jwks: dict
-        :param azure_jwks: trusted JWKs formatted as a JSON Web Key Set
+        :type azure_oauth: FlaskAzureOauth
+        :param azure_oauth: instance of the FlaskAzureOauth to retrieve cached JWKs 
         """
         self._token_string = token_string
-        self.jwks = azure_jwks
+        self.jwks = azure_oauth.jwks
+        self._azure_oauth = azure_oauth
         self._payload = self._get_payload()
         self.claims = AzureJWTClaims(
             payload=self._payload,
@@ -360,8 +361,13 @@ class AzureToken:
         for key in jwks["keys"]:
             if key["kid"] == self._kid:
                 jwk = key
+
         if jwk is None:
-            auth_error_token_untrusted_jwk()
+            if datetime.now() - self._azure_oauth.jwks_last_updated > timedelta(minutes=5):
+                self._azure_oauth._update_jwks()
+                return self._get_jwk(self._azure_oauth.jwks)
+
+            auth_error_token_untrusted_jwk()            
 
         return jwk
 
@@ -502,7 +508,7 @@ class AzureTokenValidator(BearerTokenValidator):
         azure_tenancy_id: str,
         azure_application_id: str,
         azure_client_application_ids: Optional[List[str]],
-        azure_jwks: dict,
+        azure_oauth,
     ):
         """
         :type azure_tenancy_id: str
@@ -512,13 +518,13 @@ class AzureTokenValidator(BearerTokenValidator):
         :type azure_client_application_ids: Optional[List[str]]
         :param azure_client_application_ids: Optional IDs of Azure Active Directory application registrations
         representing clients of this app, if none all client applications will be allowed
-        :type azure_jwks: dict
-        :param azure_jwks: trusted JWKs formatted as a JSON Web Key Set
+        :type azure_oauth: FlaskAzureOauth
+        :param azure_oauth: instance of the FlaskAzureOauth to retrieve cached JWKs 
         """
         self.tenancy_id = azure_tenancy_id
         self.application_id = azure_application_id
         self.client_application_ids = azure_client_application_ids
-        self.jwks = azure_jwks
+        self.azure_oauth = azure_oauth
 
         super().__init__(realm=None)
 
@@ -544,7 +550,7 @@ class AzureTokenValidator(BearerTokenValidator):
                 azure_tenancy_id=self.tenancy_id,
                 azure_application_id=self.application_id,
                 azure_client_application_ids=self.client_application_ids,
-                azure_jwks=self.jwks,
+                azure_oauth=self.azure_oauth,
             )
             auth_error_token_scopes_insufficient(resource_scopes=scope, token_scopes=list(token.scopes))
 
@@ -565,7 +571,7 @@ class AzureTokenValidator(BearerTokenValidator):
             azure_tenancy_id=self.tenancy_id,
             azure_application_id=self.application_id,
             azure_client_application_ids=self.client_application_ids,
-            azure_jwks=self.jwks,
+            azure_oauth=self.azure_oauth,
         )
         token.claims.validate()
 
